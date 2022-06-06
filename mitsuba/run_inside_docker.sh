@@ -19,4 +19,4 @@ echo building done
 
 echo
 echo Run mitsuba...
-time ./render_spaceship.sh
+time ./render_scene.sh

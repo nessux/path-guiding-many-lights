@@ -1,5 +1,5 @@
 scene_dir=scenes
-scene=spaceship
+scene=city
 integrator=path
 spp=256
 echo

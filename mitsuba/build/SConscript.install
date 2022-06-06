@@ -27,7 +27,7 @@ def installAs(target, path, prefix = None):
 	return result
 
 if not 'DISTDIR' in env:
-	print 'The \"DISTDIR\" variable is missing. Please update your configuration file!'
+	print('The \"DISTDIR\" variable is missing. Please update your configuration file!')
 	Exit(1)
 
 distDir = env.GetBuildPath(env['DISTDIR'])
@@ -166,3 +166,5 @@ if dist:
 		Depends(distTarget, installTargets)
 	elif 'linux' in sys.platform:
 		env.Command("mitsuba-%s.tar.gz" % MTS_VERSION, [], "#data/linux/build-sourcedist.sh %s" % MTS_VERSION)
+
+
