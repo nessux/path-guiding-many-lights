@@ -518,6 +518,16 @@ public:
 		if (extension != properExtension)
 			filename.replace_extension(properExtension);
 
+		// Adjust filename if file already exists
+		fs::path parent = filename.parent_path();
+		std::string stem = filename.stem().string();
+		int count = 1;
+		while (fs::exists(filename)) {
+			filename = fs::path(parent);
+			filename /= fs::path(stem + std::string("_") + std::to_string(count) + properExtension);
+			count++;
+		}
+
 		Log(EInfo, "Writing image to \"%s\" ..", filename.string().c_str());
 		ref<FileStream> stream = new FileStream(filename, FileStream::ETruncWrite);
 

@@ -442,6 +442,8 @@ protected:
  */
 class MTS_EXPORT_RENDER Emitter : public AbstractEmitter, public HWResource {
 public:
+	uint32_t treePath;
+
 	/**
 	 * \brief This list of flags is used to additionally characterize
 	 * and classify the response functions of different types of sensors
