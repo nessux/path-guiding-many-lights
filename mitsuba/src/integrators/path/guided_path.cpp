@@ -37,10 +37,12 @@ static void addToAtomicFloat(std::atomic<Float>& var, Float val) {
     while (!var.compare_exchange_weak(current, current + val));
 }
 
+// returns the k-th bit in data
 static inline bool getBit(uint32_t data, int k) {
     return (data >> k) & (uint32_t)1;
 }
 
+// sets the k-th bit in data to value
 static inline uint32_t setBit(uint32_t data, bool value, int k) {
     return (data & ~((uint32_t)1 << k)) | ((uint32_t)value << k);
 }
@@ -51,7 +53,6 @@ public:
     LightTreeNode() {
         children = {};
         emitter = nullptr;
-        // weight = 0.f;
         weights.fill(0.f);
     }
 
@@ -59,12 +60,7 @@ public:
         return emitter != nullptr;
     }
 
-    //const Float spatialDistance(Point& point, AABB& box) {
-    //    // return 1.f / (box.squaredDistanceTo(point) + box.getExtents().length() * 0.5f);
-    //    return 1.f / (box.squaredDistanceTo(point) + box.getExtents().length() * 0.1f);
-    //}
-
-    const Emitter* sampleEmitter(std::vector<LightTreeNode>& nodes, Point& point, Float& emPdf, Float sample) {
+    const Emitter* sampleEmitter(std::vector<LightTreeNode>& nodes, Point& point, Float& emPmf, Float sample) {
         if (isLeaf()) {
             return emitter;
         }
@@ -78,35 +74,18 @@ public:
         if (sample <= fraction && fraction > 0) {
             idx = 0;
             sampleReuse = sample / fraction;
-            emPdf *= fraction;
+            emPmf *= fraction;
         }
         else {
             idx = 1;
             sampleReuse = (sample - fraction) / (1.f - fraction);
-            emPdf *= 1.f - fraction;
+            emPmf *= 1.f - fraction;
         }
 
-        return nodes[children[idx]].sampleEmitter(nodes, point, emPdf, sampleReuse);
+        return nodes[children[idx]].sampleEmitter(nodes, point, emPmf, sampleReuse);
     }
 
-    /*Float emitterPdf(std::vector<LightTreeNode>& nodes, Point& point, const Emitter* target) {
-        if (isLeaf()) return 1.f;
-
-        if (depth > sizeof(uint32_t) - 1) {
-            AABB aabb = target->getAABB();
-            bool hit = false;
-            return emitterPdf(nodes, point, target, aabb, hit);
-        }
-
-        int idx = getBit(target->treePath, depth);
-
-        Float sum = weights[0] + weights[1];
-        Float factor = sum > 0 ? (weights[idx] / sum) : 0.5f;
-
-        return factor * nodes[children[idx]].emitterPdf(nodes, point, target);
-    }*/
-
-    Float emitterPdf(std::vector<LightTreeNode>& nodes, Point& point, const Emitter* target, AABB& aabb, bool& hit) {
+    Float emitterPmf(std::vector<LightTreeNode>& nodes, Point& point, const Emitter* target, AABB& aabb, bool& hit) {
         if (isLeaf()) {
             if (emitter == target) {
                 hit = true;
@@ -126,7 +105,7 @@ public:
         Float pdf = 0.f;
         for (int i = 0; i < 2; i++) {
             Float factor = sum > 0 ? (weights[i] / sum) : 0.5f;
-            pdf += factor * nodes[children[i]].emitterPdf(nodes, point, target, aabb, hit);
+            pdf += factor * nodes[children[i]].emitterPmf(nodes, point, target, aabb, hit);
             if (hit) break;
         }
         return pdf;
@@ -149,9 +128,6 @@ public:
     std::array<Float, 2> weights;
     AABB boundingBox;
     const Emitter* emitter;
-    // Float weight;
-
-    // int depth;
 };
 
 struct EmitterWeight {
@@ -172,36 +148,27 @@ public:
         m_nodes.emplace_back();
     }
 
-    /*LightTreeNode* node(uint32_t id) {
-        return &m_nodes[id];
-    }*/
-
-    const Emitter* sampleEmitter(Point& point, Float& emPdf, Float sample) {
-        return sampleEmitter(0, point, emPdf, sample);
+    const Emitter* sampleEmitter(Point& point, Float& emPmf, Float sample) {
+        return sampleEmitter(0, point, emPmf, sample);
     }
 
-    const Emitter* sampleEmitter(uint32_t node, Point& point, Float& emPdf, Float sample) {
+    const Emitter* sampleEmitter(uint32_t node, Point& point, Float& emPmf, Float sample) {
         Float pdf = 1.f;
         const Emitter* result = m_nodes[node].sampleEmitter(m_nodes, point, pdf, sample);
-        emPdf = pdf;
+        emPmf = pdf;
         return result;
     }
 
-    Float emitterPdf(Point& point, const Emitter* emitter, bool& hit) {
-        return emitterPdf(0, point, emitter, hit);
+    Float emitterPmf(Point& point, const Emitter* emitter, bool& hit) {
+        return emitterPmf(0, point, emitter, hit);
     }
 
-    Float emitterPdf(uint32_t node, Point& point, const Emitter* emitter, bool& hit) {
+    Float emitterPmf(uint32_t node, Point& point, const Emitter* emitter, bool& hit) {
         if (emitter == nullptr) return 0.f;
 
         AABB boundingBox = emitter->getAABB();
-        return m_nodes[node].emitterPdf(m_nodes, point, emitter, boundingBox, hit);
+        return m_nodes[node].emitterPmf(m_nodes, point, emitter, boundingBox, hit);
     }
-
-    /*Float emitterPdf(uint32_t node, Point& point, const Emitter* emitter) {
-        if (emitter == nullptr) return 0.f;
-        return m_nodes[node].emitterPdf(m_nodes, point, emitter);
-    }*/
 
     AABB boundingBox(uint32_t node) {
         return m_nodes[node].boundingBox;
@@ -228,14 +195,6 @@ public:
         return m_environment;
     }
 
-    /*uint32_t parent(uint32_t node) {
-        AABB aabb = m_nodes[node].boundingBox;
-
-        uint32_t parent;
-        parentRecursive(0, node, aabb, parent);
-        return parent;
-    }*/
-
     void build(Scene* scene) {
         SLog(EInfo, "Building emitter BVH");
         auto t0 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -251,14 +210,13 @@ public:
             // skip environment emitter
             if (emitter->isEnvironmentEmitter()) continue;
 
-
-            // TODO: does this work?
             PositionSamplingRecord pRec;
             Point2 sample(0, 0);
 
-            Float weight = emitter->samplePosition(pRec, sample).average();
-            // Float weight = emitter->getShape()->getSurfaceArea();
-            // Float weight = 1.f;
+            // tree construction heuristic
+            Float weight = emitter->samplePosition(pRec, sample).average(); // surface area radiance
+            // Float weight = emitter->getShape()->getSurfaceArea(); // surface area
+            // Float weight = 1.f; // balanced
 
             emitters.push_back({ emitter, weight, emitter->getAABB().max, 0 });
         }
@@ -304,74 +262,8 @@ public:
 
     }
 
-
-    void test_traverse(uint32_t node, int depth, std::vector<int>& depths) {
-        if (m_nodes[node].emitter != nullptr) {
-            depths.push_back(depth);
-            return;
-        }
-
-        // std::cout << depth << std::endl;
-        // SLog(EInfo, std::to_string(depth).c_str());
-
-        test_traverse(m_nodes[node].children[0], depth + 1, depths);
-        test_traverse(m_nodes[node].children[1], depth + 1, depths);
-    }
-
-    void test(Scene* scene) {
-        /*auto t0 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-
-        build(scene);*/
-
-        std::vector<int> depths;
-        test_traverse(0, 0, depths);
-
-        int max_depth = depths[0];
-        int min_depth = depths[0];
-        int sum = 0;
-
-        for (int i = 0; i < depths.size(); i++) {
-            sum += depths[i];
-            if (depths[i] < min_depth) min_depth = depths[i];
-            if (depths[i] > max_depth) max_depth = depths[i];
-        }
-
-        Float avg_depth = static_cast<Float>(sum) / static_cast<Float>(depths.size());
-        SLog(EInfo, std::string("min depth: ").append(std::to_string(min_depth)).c_str());
-        SLog(EInfo, std::string("max depth: ").append(std::to_string(max_depth)).c_str());
-        SLog(EInfo, std::string("avg depth: ").append(std::to_string(avg_depth)).c_str());
-
-        size_t memory = m_nodes.capacity() * sizeof(LightTreeNode) + sizeof(*this);
-        SLog(EInfo, std::string("MEMORY: ").append(std::to_string(memory)).c_str());
-
-        /*auto t1 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        SLog(EInfo, "BVH BUILD TIME:");
-        SLog(EInfo, std::to_string(t1 - t0).c_str());*/
-    }
-
 private:
-
-    /*bool parentRecursive(uint32_t current, uint32_t node, AABB& aabb, uint32_t& parent) {
-        AABB currentBounds = m_nodes[current].boundingBox;
-        if (!currentBounds.contains(aabb.min) || !currentBounds.contains(aabb.max)) {
-            return false;
-        }
-
-        std::array<uint32_t, 2> children = m_nodes[current].children;
-        for (uint32_t child : children) {
-            if (child == node) {
-                parent = current;
-                return true;
-            }
-        }
-
-        return parentRecursive(children[0], node, aabb, parent)
-            || parentRecursive(children[1], node, aabb, parent);
-    }*/
-
-
-
-
+    // this is the "partitionAxis" function in the thesis
     uint32_t sort(std::vector<EmitterWeight>& emitters, uint32_t start, uint32_t end, int axis, Float weightsAccLeft, Float weightsAccRight) {
         if (end - start == 1) {
             return start;
@@ -413,8 +305,6 @@ private:
             emitters[right] = temp;
         }
 
-        //assert(left == right);
-
         if (weightsAccLeft + weightsLeft > weightsRight + weightsAccRight) {
             return sort(emitters, start, left, axis, weightsAccLeft, weightsAccRight + weightsRight);
         }
@@ -446,14 +336,12 @@ private:
             nextIndex = start + 1;
         }
         else {
-            // Float threshold = sumWeights * .5f;
             nextIndex = sort(emitters, start, end, axis, 0.f, 0.f);
 
             // sanity check
             if (nextIndex == end) {
                 nextIndex--;
-            }
-            else if (nextIndex == start) {
+            } else if (nextIndex == start) {
                 nextIndex++;
             }
         }
@@ -496,16 +384,16 @@ private:
 
 
 
-class LightCutNode {
+class LightcutNode {
 public:
-    LightCutNode() {
+    LightcutNode() {
         m_children = {};
         for (size_t i = 0; i < m_sum.size(); ++i) {
             m_sum[i].store(0, std::memory_order_relaxed);
         }
     }
 
-    const Emitter* sampleEmitter(std::vector<LightCutNode>& nodes, LightTree* lightTree, Point& point, Float& emPdf, Float sample) const {
+    const Emitter* sampleEmitter(std::vector<LightcutNode>& nodes, LightTree* lightTree, Point& point, Float& emPmf, Float sample) const {
         Float left = sum(0);
         Float right = sum(1);
         Float total = left + right;
@@ -517,25 +405,25 @@ public:
         if (sample <= fraction && fraction > 0) {
             idx = 0;
             sampleReuse = sample / fraction;
-            emPdf *= fraction;
+            emPmf *= fraction;
         }
         else {
             idx = 1;
             sampleReuse = (sample - fraction) / (1.f - fraction);
-            emPdf *= 1.f - fraction;
+            emPmf *= 1.f - fraction;
         }
 
         if (isLeaf(idx)) {
             Float treePdf;
             const Emitter* result = lightTree->sampleEmitter(lightTreeNode(idx), point, treePdf, sampleReuse);
-            emPdf *= treePdf;
+            emPmf *= treePdf;
             return result;
         }
 
-        return nodes[child(idx)].sampleEmitter(nodes, lightTree, point, emPdf, sampleReuse);
+        return nodes[child(idx)].sampleEmitter(nodes, lightTree, point, emPmf, sampleReuse);
     }
 
-    Float emitterPdf(std::vector<LightCutNode>& nodes, LightTree* lightTree, Point& point, const Emitter* emitter, int depth) {
+    Float emitterPmf(std::vector<LightcutNode>& nodes, LightTree* lightTree, Point& point, const Emitter* emitter, int depth) {
         int idx = getBit(emitter->treePath, depth);
 
         Float total = sum(0) + sum(1);
@@ -543,16 +431,15 @@ public:
 
         if (isLeaf(idx)) {
             bool hit = false;
-            Float treePdf = factor * lightTree->emitterPdf(lightTreeNode(idx), point, emitter, hit);
-            // Float treePdf = factor * lightTree->emitterPdf(lightTreeNode(idx), point, emitter);
+            Float treePdf = factor * lightTree->emitterPmf(lightTreeNode(idx), point, emitter, hit);
             return treePdf;
         }
         else {
-            return factor * nodes[child(idx)].emitterPdf(nodes, lightTree, point, emitter, depth + 1);
+            return factor * nodes[child(idx)].emitterPmf(nodes, lightTree, point, emitter, depth + 1);
         }
     }
 
-    Float emitterPdf(std::vector<LightCutNode>& nodes, LightTree* lightTree, Point& point, const Emitter* emitter, AABB& aabb) {
+    Float emitterPmf(std::vector<LightcutNode>& nodes, LightTree* lightTree, Point& point, const Emitter* emitter, AABB& aabb) {
         Float total = sum(0) + sum(1);
 
         for (int i = 0; i < 2; i++) {
@@ -560,7 +447,7 @@ public:
                 Float factor = total > 0.f ? (sum(i) / total) : 0.5f;
 
                 bool hit = false;
-                Float treePdf = factor * lightTree->emitterPdf(lightTreeNode(i), point, emitter, hit);
+                Float treePdf = factor * lightTree->emitterPmf(lightTreeNode(i), point, emitter, hit);
                 if (hit) return treePdf;
             }
         }
@@ -572,7 +459,7 @@ public:
             AABB childBB = lightTree->boundingBox(lightTreeNode(i));
             if (childBB.contains(aabb.min) && childBB.contains(aabb.max)) {
                 Float factor = total > 0.f ? (sum(i) / total) : 0.5f;
-                pdf += factor * nodes[child(i)].emitterPdf(nodes, lightTree, point, emitter, aabb);
+                pdf += factor * nodes[child(i)].emitterPmf(nodes, lightTree, point, emitter, aabb);
                 if (pdf > 0) break;
             }
         }
@@ -580,7 +467,7 @@ public:
 
     }
 
-    bool record(std::vector<LightCutNode>& nodes, LightTree* lightTree, const Emitter* emitter, int depth, Float value) {
+    bool record(std::vector<LightcutNode>& nodes, LightTree* lightTree, const Emitter* emitter, int depth, Float value) {
         int idx = getBit(emitter->treePath, depth);
 
         if (isLeaf(idx)) {
@@ -593,7 +480,7 @@ public:
         return true;
     }
 
-    bool record(std::vector<LightCutNode>& nodes, LightTree* lightTree, const Emitter* emitter, AABB& aabb, Float value) {
+    bool record(std::vector<LightcutNode>& nodes, LightTree* lightTree, const Emitter* emitter, AABB& aabb, Float value) {
         for (int i = 0; i < 2; i++) {
             if (isLeaf(i) && lightTree->contains(lightTreeNode(i), emitter)) {
                 addToAtomicFloat(m_sum[i], value);
@@ -615,7 +502,7 @@ public:
         return false;
     }
 
-    void copyFrom(const LightCutNode& arg) {
+    void copyFrom(const LightcutNode& arg) {
         for (int i = 0; i < 2; ++i) {
             setSum(i, arg.sum(i));
             m_children[i] = arg.m_children[i];
@@ -623,11 +510,11 @@ public:
         }
     }
 
-    LightCutNode(const LightCutNode& arg) {
+    LightcutNode(const LightcutNode& arg) {
         copyFrom(arg);
     }
 
-    LightCutNode& operator=(const LightCutNode& arg) {
+    LightcutNode& operator=(const LightcutNode& arg) {
         copyFrom(arg);
         return *this;
     }
@@ -666,13 +553,13 @@ public:
         return child(idx) == 0;
     }
 
-    void build(std::vector<LightCutNode>& nodes) {
+    void build(std::vector<LightcutNode>& nodes) {
         for (int i = 0; i < 2; ++i) {
             if (isLeaf(i)) {
                 continue;
             }
 
-            LightCutNode& c = nodes[child(i)];
+            LightcutNode& c = nodes[child(i)];
             c.build(nodes);
 
             Float sum = 0;
@@ -682,6 +569,23 @@ public:
             setSum(i, sum);
         }
     }
+
+    int countLeafs(const std::vector<LightcutNode>& nodes) const {
+        int sum = 0;
+        for (int i = 0; i < 2; ++i) {
+            if (isLeaf(i)) sum += 1;
+            else sum += nodes[child(i)].countLeafs(nodes);
+        }
+        return sum;
+    }
+    int countEmitters(const std::vector<LightcutNode>& nodes, LightTree* lightTree) const {
+        int sum = 0;
+        for (int i = 0; i < 2; ++i) {
+            if (isLeaf(i)) sum += lightTree->isLeaf(m_lightTreeNodes[i]) ? 1 : 0;
+            else sum += nodes[child(i)].countEmitters(nodes, lightTree);
+        }
+        return sum;
+    }
 private:
     std::array<std::atomic<Float>, 2> m_sum;
     std::array<uint16_t, 2> m_children;
@@ -690,9 +594,9 @@ private:
     std::array<uint32_t, 2> m_lightTreeNodes;
 };
 
-class LightCut {
+class Lightcut {
 public:
-    LightCut() {
+    Lightcut() {
         m_atomic.sum.store(0, std::memory_order_relaxed);
         m_atomic.environmentSum.store(0, std::memory_order_relaxed);
         m_maxDepth = 0;
@@ -707,59 +611,39 @@ public:
     }
 
     Float envSampleFraction(LightTree* lightTree) {
-        /*Float sum = m_atomic.sum.load(std::memory_order_relaxed);
-        Float envSum = m_atomic.environmentSum.load(std::memory_order_relaxed) * 1.f;
-
-        Float total = sum + envSum;
-        Float envFraction = total > 0 ? (envSum / total) : 0.5f;
-        if (!lightTree->hasEnvironmentEmitter()) envFraction = 0.f;*/
-
         if (!lightTree->hasEnvironmentEmitter()) return 0.f;
 
         return envFraction;
     }
 
-    const Emitter* sampleEmitter(LightTree* lightTree, Point& point, Float& emPdf, Float sample) {
-        // Float envFraction = 0.f;
-        // if (lightTree->hasEnvironmentEmitter()) envFraction = 0.25f;
-
+    const Emitter* sampleEmitter(LightTree* lightTree, Point& point, Float& emPmf, Float sample) {
         Float envFraction = envSampleFraction(lightTree);
 
-        Float pdf;
+        Float pmf;
         const Emitter* result;
         if (lightTree->hasEnvironmentEmitter() && sample <= envFraction && envFraction > 0) {
-            pdf = envFraction;
+            pmf = envFraction;
             result = lightTree->getEnvironmentEmitter();
         }
         else {
             Float sampleReuse = (sample - envFraction) / (1.f - envFraction);
-            pdf = 1.f - envFraction;
-            result = m_nodes[0].sampleEmitter(m_nodes, lightTree, point, pdf, sampleReuse);
+            pmf = 1.f - envFraction;
+            result = m_nodes[0].sampleEmitter(m_nodes, lightTree, point, pmf, sampleReuse);
         }
 
-        emPdf = pdf;
+        emPmf = pmf;
         return result;
-
-        /*Float pdf = 1.f;
-        const Emitter* result = m_nodes[0].sampleEmitter(m_nodes, lightTree, point, pdf, sample);
-        emPdf = pdf;
-        return result;*/
     }
 
-    Float emitterPdf(LightTree* lightTree, Point& point, const Emitter* emitter) {
-        // Float envFraction = 0.f;
-        // if (lightTree->hasEnvironmentEmitter()) envFraction = 0.25f;
-
+    Float emitterPmf(LightTree* lightTree, Point& point, const Emitter* emitter) {
         Float envFraction = envSampleFraction(lightTree);
 
         if (emitter->isEnvironmentEmitter()) {
             return envFraction;
         }
         else {
-            return (1.f - envFraction) * m_nodes[0].emitterPdf(m_nodes, lightTree, point, emitter, 0);
+            return (1.f - envFraction) * m_nodes[0].emitterPmf(m_nodes, lightTree, point, emitter, 0);
         }
-
-        // return m_nodes[0].emitterPdf(m_nodes, lightTree, point, emitter, 0);
     }
 
     void record(LightTree* lightTree, const Emitter* emitter, Float value) {
@@ -770,15 +654,10 @@ public:
             return;
         }
 
-        /*AABB aabb = emitter->getAABB();
-        if (std::isfinite(value) && value > 0) {
-            m_nodes[0].record(m_nodes, lightTree, emitter, aabb, value);
-        }*/
-
         m_nodes[0].record(m_nodes, lightTree, emitter, 0, value);
     }
 
-    const LightCutNode& node(size_t i) const {
+    const LightcutNode& node(size_t i) const {
         return m_nodes[i];
     }
 
@@ -791,10 +670,10 @@ public:
     }
 
     size_t approxMemoryFootprint() const {
-        return m_nodes.capacity() * sizeof(LightCutNode) + sizeof(*this);
+        return m_nodes.capacity() * sizeof(LightcutNode) + sizeof(*this);
     }
 
-    void reset(const LightCut& previousLightCut, LightTree* lightTree, int newMaxDepth, Float subdivisionThreshold) {
+    void reset(const Lightcut& previousLightcut, LightTree* lightTree, int newMaxDepth, Float subdivisionThreshold) {
         m_atomic = Atomic{};
         m_maxDepth = 0;
         m_nodes.clear();
@@ -806,14 +685,14 @@ public:
         struct StackNode {
             size_t nodeIndex;
             size_t otherNodeIndex;
-            const LightCut* otherLightCut;
+            const Lightcut* otherLightcut;
             int depth;
         };
 
         std::stack<StackNode> nodeIndices;
-        nodeIndices.push({ 0, 0, &previousLightCut, 1 });
+        nodeIndices.push({ 0, 0, &previousLightcut, 1 });
 
-        const Float total = previousLightCut.m_atomic.sum;
+        const Float total = previousLightcut.m_atomic.sum;
 
         while (!nodeIndices.empty()) {
             StackNode sNode = nodeIndices.top();
@@ -821,9 +700,10 @@ public:
 
             m_maxDepth = std::max(m_maxDepth, sNode.depth);
 
-            const LightCutNode& otherNode = sNode.otherLightCut->m_nodes[sNode.otherNodeIndex];
+            const LightcutNode& otherNode = sNode.otherLightcut->m_nodes[sNode.otherNodeIndex];
 
             for (int i = 0; i < 2; i++) {
+                if (total <= 0) continue;
                 const Float fraction = total > 0 ? (otherNode.sum(i) / total) : std::pow(0.5f, sNode.depth);
                 SAssert(fraction <= 1.0f + Epsilon);
 
@@ -836,8 +716,8 @@ public:
                     uint16_t otherChild = otherNode.child(i);
 
                     if (!otherNode.isLeaf(i)) {
-                        SAssert(sNode.otherLightCut == &previousLightCut);
-                        nodeIndices.push({ m_nodes.size(), otherChild, &previousLightCut, sNode.depth + 1 });
+                        SAssert(sNode.otherLightcut == &previousLightcut);
+                        nodeIndices.push({ m_nodes.size(), otherChild, &previousLightcut, sNode.depth + 1 });
                     }
                     else {
                         nodeIndices.push({ m_nodes.size(), m_nodes.size(), this, sNode.depth + 1 });
@@ -846,20 +726,16 @@ public:
                     m_nodes[sNode.nodeIndex].setChild(i, static_cast<uint16_t>(m_nodes.size()));
                     m_nodes.emplace_back();
 
-                    LightCutNode& newNode = m_nodes.back();
+                    LightcutNode& newNode = m_nodes.back();
                     newNode.setSum(otherNode.sum(i) / 2);
 
                     for (int j = 0; j < 2; j++) {
-                        /*if (otherNode.isLeaf(i)) {
-                            newNode.setLightTreeNode(j, lightTree->child(lightTreeNode, j));
-                        } else {
-                            newNode.setLightTreeNode(j, m_nodes[otherChild].lightTreeNode(j));
-                        }*/
+                        // TODO: light tree node pointers could be copied from otherChild instead of accessing the light tree
                         newNode.setLightTreeNode(j, lightTree->child(lightTreeNode, j));
                     }
 
                     if (m_nodes.size() > std::numeric_limits<uint16_t>::max()) {
-                        SLog(EWarn, "LightCut hit maximum children count.");
+                        SLog(EWarn, "Lightcut hit maximum children count.");
                         nodeIndices = std::stack<StackNode>();
                         break;
                     }
@@ -872,7 +748,7 @@ public:
         }
     }
 
-    void build() {
+    void build(Float envSamplingFraction) {
         auto& root = m_nodes[0];
         root.build(m_nodes);
 
@@ -884,18 +760,27 @@ public:
 
         Float env = m_atomic.environmentSum.load(std::memory_order_relaxed);
         Float total = sum + env;
-        envFraction = total > 0 ? (env / total) : 0.5f;
 
-        // envFraction = std::min(std::max(envFraction, 0.0f), 0.5f);
+        if (envSamplingFraction == -1.f) {
+            envFraction = total > 0 ? (env / total) : 0.5f;
+        } else {
+            envFraction = envSamplingFraction;
+        }
+    }
 
-        // envFraction = 0.5f;
+    Float sum() const {
+        return m_atomic.sum.load(std::memory_order_relaxed);
+    }
 
-        // envFraction = std::min(envFraction, 0.75f);
-        // envFraction = (env > 0.f) ? 0.75f : 0.25f;
+    int countLeafs() const {
+        return m_nodes[0].countLeafs(m_nodes);
+    }
+    int countEmitters(LightTree* lightTree) const {
+        return m_nodes[0].countEmitters(m_nodes, lightTree);
     }
 
 private:
-    std::vector<LightCutNode> m_nodes;
+    std::vector<LightcutNode> m_nodes;
     Float envFraction;
 
     struct Atomic {
@@ -922,9 +807,9 @@ private:
     int m_maxDepth;
 };
 
-class LightCutWrapper {
+class LightcutWrapper {
 public:
-    LightCutWrapper() {
+    LightcutWrapper() {
     }
 
     void record(LightTree* lightTree, DirectSamplingRecord& dRec, Float value) {
@@ -935,8 +820,8 @@ public:
         building.record(lightTree, emitter, value);
     }
 
-    void build() {
-        building.build();
+    void build(Float envSamplingFraction) {
+        building.build(envSamplingFraction);
         sampling = building;
     }
 
@@ -944,12 +829,12 @@ public:
         building.reset(sampling, lightTree, maxDepth, subdivisionThreshold);
     }
 
-    const Emitter* sampleEmitter(LightTree* lightTree, Point& point, Float& emPdf, Float sample) {
-        return sampling.sampleEmitter(lightTree, point, emPdf, sample);
+    const Emitter* sampleEmitter(LightTree* lightTree, Point& point, Float& emPmf, Float sample) {
+        return sampling.sampleEmitter(lightTree, point, emPmf, sample);
     }
 
-    Float emitterPdf(LightTree* lightTree, Point& point, const Emitter* emitter) {
-        return sampling.emitterPdf(lightTree, point, emitter);
+    Float emitterPmf(LightTree* lightTree, Point& point, const Emitter* emitter) {
+        return sampling.emitterPmf(lightTree, point, emitter);
     }
 
     int depth() const {
@@ -967,9 +852,20 @@ public:
     Float envSampleFraction(LightTree* lightTree) {
         return sampling.envSampleFraction(lightTree);
     }
+
+    Float sum() const {
+        return sampling.sum();
+    }
+
+    int countLeafs() const {
+        return sampling.countLeafs();
+    }
+    int countEmitters(LightTree* lightTree) const {
+        return sampling.countEmitters(lightTree);
+    }
 private:
-    LightCut building;
-    LightCut sampling;
+    Lightcut building;
+    Lightcut sampling;
 };
 
 
@@ -1713,15 +1609,15 @@ struct STreeNode {
         return children[childIndex(p)];
     }
 
-    void wrappers(Point& p, Vector& size, std::vector<STreeNode>& nodes, DTreeWrapper*& dTreeWrapper, LightCutWrapper*& lightCutWrapper) {
+    void wrappers(Point& p, Vector& size, std::vector<STreeNode>& nodes, DTreeWrapper*& dTreeWrapper, LightcutWrapper*& lightcutWrapper) {
         SAssert(p[axis] >= 0 && p[axis] <= 1);
         if (isLeaf) {
             dTreeWrapper = &dTree;
-            lightCutWrapper = &lightCut;
+            lightcutWrapper = &lightcut;
         }
         else {
             size[axis] /= 2;
-            nodes[nodeIndex(p)].wrappers(p, size, nodes, dTreeWrapper, lightCutWrapper);
+            nodes[nodeIndex(p)].wrappers(p, size, nodes, dTreeWrapper, lightcutWrapper);
         }
     }
 
@@ -1740,19 +1636,19 @@ struct STreeNode {
         return &dTree;
     }
 
-    LightCutWrapper* lightCutWrapper(Point& p, Vector& size, std::vector<STreeNode>& nodes) {
+    LightcutWrapper* lightcutWrapper(Point& p, Vector& size, std::vector<STreeNode>& nodes) {
         SAssert(p[axis] >= 0 && p[axis] <= 1);
         if (isLeaf) {
-            return &lightCut;
+            return &lightcut;
         }
         else {
             size[axis] /= 2;
-            return nodes[nodeIndex(p)].lightCutWrapper(p, size, nodes);
+            return nodes[nodeIndex(p)].lightcutWrapper(p, size, nodes);
         }
     }
 
-    const LightCutWrapper* lightCutWrapper() const {
-        return &lightCut;
+    const LightcutWrapper* lightcutWrapper() const {
+        return &lightcut;
     }
 
     int depth(Point& p, const std::vector<STreeNode>& nodes) const {
@@ -1778,11 +1674,11 @@ struct STreeNode {
     }
 
     void forEachLeaf(
-        std::function<void(const DTreeWrapper*, const LightCutWrapper*, const Point&, const Vector&)> func,
+        std::function<void(const DTreeWrapper*, const LightcutWrapper*, const Point&, const Vector&)> func,
         Point p, Vector size, const std::vector<STreeNode>& nodes) const {
 
         if (isLeaf) {
-            func(&dTree, &lightCut, p, size);
+            func(&dTree, &lightcut, p, size);
         }
         else {
             size[axis] /= 2;
@@ -1826,7 +1722,7 @@ struct STreeNode {
 
     bool isLeaf;
     DTreeWrapper dTree;
-    LightCutWrapper lightCut;
+    LightcutWrapper lightcut;
     int axis;
     std::array<uint32_t, 2> children;
 };
@@ -1875,22 +1771,22 @@ public:
             cur.children[i] = idx;
             nodes[idx].axis = (cur.axis + 1) % 3;
             nodes[idx].dTree = cur.dTree;
-            nodes[idx].lightCut = cur.lightCut;
+            nodes[idx].lightcut = cur.lightcut;
             nodes[idx].dTree.setStatisticalWeightBuilding(nodes[idx].dTree.statisticalWeightBuilding() / 2);
         }
         cur.isLeaf = false;
         cur.dTree = {}; // Reset to an empty dtree to save memory.
-        cur.lightCut = {};
+        cur.lightcut = {};
     }
 
-    void wrappers(Point p, Vector& size, DTreeWrapper*& dTreeWrapper, LightCutWrapper*& lightCutWrapper) {
+    void wrappers(Point p, Vector& size, DTreeWrapper*& dTreeWrapper, LightcutWrapper*& lightcutWrapper) {
         size = m_aabb.getExtents();
         p = Point(p - m_aabb.min);
         p.x /= size.x;
         p.y /= size.y;
         p.z /= size.z;
 
-        m_nodes[0].wrappers(p, size, m_nodes, dTreeWrapper, lightCutWrapper);
+        m_nodes[0].wrappers(p, size, m_nodes, dTreeWrapper, lightcutWrapper);
     }
 
     DTreeWrapper* dTreeWrapper(Point p, Vector& size) {
@@ -1934,48 +1830,48 @@ public:
 
     // -----------------------------
 
-    LightCutWrapper* lightCutWrapper(Point p, Vector& size) {
+    LightcutWrapper* lightcutWrapper(Point p, Vector& size) {
         size = m_aabb.getExtents();
         p = Point(p - m_aabb.min);
         p.x /= size.x;
         p.y /= size.y;
         p.z /= size.z;
 
-        return m_nodes[0].lightCutWrapper(p, size, m_nodes);
+        return m_nodes[0].lightcutWrapper(p, size, m_nodes);
     }
 
-    LightCutWrapper* lightCutWrapper(Point p) {
+    LightcutWrapper* lightcutWrapper(Point p) {
         Vector size;
-        return lightCutWrapper(p, size);
+        return lightcutWrapper(p, size);
     }
 
-    void forEachLightCutWrapperConst(std::function<void(const LightCutWrapper*)> func) const {
+    void forEachLightcutWrapperConst(std::function<void(const LightcutWrapper*)> func) const {
         for (auto& node : m_nodes) {
             if (node.isLeaf) {
-                func(&node.lightCut);
+                func(&node.lightcut);
             }
         }
     }
 
-    void forEachLeafConst(std::function<void(const DTreeWrapper*, const LightCutWrapper*)> func) const {
+    void forEachLeafConst(std::function<void(const DTreeWrapper*, const LightcutWrapper*)> func) const {
         for (auto& node : m_nodes) {
             if (node.isLeaf) {
-                func(&node.dTree, &node.lightCut);
+                func(&node.dTree, &node.lightcut);
             }
         }
     }
 
-    void forEachLeafConstP(std::function<void(const DTreeWrapper*, const LightCutWrapper*, const Point&, const Vector&)> func) const {
+    void forEachLeafConstP(std::function<void(const DTreeWrapper*, const LightcutWrapper*, const Point&, const Vector&)> func) const {
         m_nodes[0].forEachLeaf(func, m_aabb.min, m_aabb.max - m_aabb.min, m_nodes);
     }
 
-    void forEachLightCutWrapperParallel(std::function<void(LightCutWrapper*)> func) {
-        int nLightCutWrappers = static_cast<int>(m_nodes.size());
+    void forEachLightcutWrapperParallel(std::function<void(LightcutWrapper*)> func) {
+        int nLightcutWrappers = static_cast<int>(m_nodes.size());
 
 #pragma omp parallel for
-        for (int i = 0; i < nLightCutWrappers; ++i) {
+        for (int i = 0; i < nLightcutWrappers; ++i) {
             if (m_nodes[i].isLeaf) {
-                func(&m_nodes[i].lightCut);
+                func(&m_nodes[i].lightcut);
             }
         }
     }
@@ -1996,7 +1892,7 @@ public:
     }
 
     void dump(BlobWriter& blob) const {
-        forEachLeafConstP([&blob](const DTreeWrapper* dTree, const LightCutWrapper* lightCut, const Point& p, const Vector& size) {
+        forEachLeafConstP([&blob](const DTreeWrapper* dTree, const LightcutWrapper* lightcut, const Point& p, const Vector& size) {
             if (dTree->statisticalWeight() > 0) {
                 dTree->dump(blob, p, size);
             }
@@ -2013,7 +1909,7 @@ public:
             for (const auto& node : m_nodes) {
                 approxMemoryFootprint += node.dTreeWrapper()->approxMemoryFootprint();
 
-                approxMemoryFootprint += node.lightCutWrapper()->approxMemoryFootprint();
+                approxMemoryFootprint += node.lightcutWrapper()->approxMemoryFootprint();
 
             }
 
@@ -2140,7 +2036,8 @@ public:
         m_sdTreeMaxMemory = props.getInteger("sdTreeMaxMemory", -1);
         m_sTreeThreshold = props.getInteger("sTreeThreshold", 12000);
         m_dTreeThreshold = props.getFloat("dTreeThreshold", 0.01f);
-        m_lightCutThreshold = props.getFloat("lightCutThreshold", 0.01f);
+        m_lightcutThreshold = props.getFloat("lightcutThreshold", 0.01f);
+        m_envSamplingFraction = props.getFloat("envSamplingFraction", -1.f);
         m_bsdfSamplingFraction = props.getFloat("bsdfSamplingFraction", 0.5f);
         m_sppPerPass = props.getInteger("sppPerPass", 4);
 
@@ -2185,7 +2082,7 @@ public:
 
         m_sdTree->refine((size_t)(std::sqrt(std::pow(2, m_iter) * m_sppPerPass / 4) * m_sTreeThreshold), m_sdTreeMaxMemory);
         m_sdTree->forEachDTreeWrapperParallel([this](DTreeWrapper* dTree) { dTree->reset(20, m_dTreeThreshold); });
-        m_sdTree->forEachLightCutWrapperParallel([this](LightCutWrapper* lightCut) { lightCut->reset(m_lightTree.get(), 32, m_lightCutThreshold); });
+        m_sdTree->forEachLightcutWrapperParallel([this](LightcutWrapper* lightCut) { lightCut->reset(m_lightTree.get(), 32, m_lightcutThreshold); });
     }
 
     void buildSDTree() {
@@ -2193,7 +2090,7 @@ public:
 
         // Build distributions
         m_sdTree->forEachDTreeWrapperParallel([](DTreeWrapper* dTree) { dTree->build(); });
-        m_sdTree->forEachLightCutWrapperParallel([](LightCutWrapper* lightCut) { lightCut->build(); });
+        m_sdTree->forEachLightcutWrapperParallel([this](LightcutWrapper* lightcut) { lightcut->build(m_envSamplingFraction); });
 
         // Gather statistics
         int maxDDepth = 0;
@@ -2214,7 +2111,7 @@ public:
         int nPointsLNodes = 0;
 
         size_t dTreeSize = 0;
-        size_t lightCutSize = 0;
+        size_t lightcutSize = 0;
 
         int maxLDepth = 0;
         int minLDepth = std::numeric_limits<int>::max();
@@ -2223,7 +2120,7 @@ public:
         size_t minLNodes = std::numeric_limits<size_t>::max();
         Float avgLNodes = 0;
 
-        m_sdTree->forEachLeafConst([&](const DTreeWrapper* dTree, const LightCutWrapper* lightCut) {
+        m_sdTree->forEachLeafConst([&](const DTreeWrapper* dTree, const LightcutWrapper* lightcut) {
             dTreeSize += dTree->approxMemoryFootprint();
 
             const int ddepth = dTree->depth();
@@ -2249,15 +2146,15 @@ public:
             minStatisticalWeight = std::min(minStatisticalWeight, statisticalWeight);
             avgStatisticalWeight += statisticalWeight;
 
-            lightCutSize += lightCut->approxMemoryFootprint();
+            lightcutSize += lightcut->approxMemoryFootprint();
 
-            const int ldepth = lightCut->depth();
+            const int ldepth = lightcut->depth();
             maxLDepth = std::max(maxLDepth, ldepth);
             minLDepth = std::min(minLDepth, ldepth);
             avgLDepth += ldepth;
 
-            if (lightCut->numNodes() > 1) {
-                const size_t nodes = lightCut->numNodes();
+            if (lightcut->numNodes() > 1) {
+                const size_t nodes = lightcut->numNodes();
                 maxLNodes = std::max(maxLNodes, nodes);
                 minLNodes = std::min(minLNodes, nodes);
                 avgLNodes += nodes;
@@ -2293,7 +2190,7 @@ public:
             "  Mean radiance = [%f, %f, %f]\n"
             "  Node count    = [" SIZE_T_FMT ", %f, " SIZE_T_FMT "]\n"
             "  Stat. weight  = [%f, %f, %f]\n",
-            dTreeSize, lightCutSize,
+            dTreeSize, lightcutSize,
             minLDepth, avgLDepth, maxLDepth,
             minLNodes, avgLNodes, maxLNodes,
             minDDepth, avgDDepth, maxDDepth,
@@ -2618,10 +2515,6 @@ public:
             }
             buildSDTree();
 
-            if (m_dumpSDTree && !m_isFinalIter) {
-                dumpSDTree(scene, sensor);
-            }
-
             ++m_iter;
             m_passesRenderedThisIter = 0;
             elapsedSeconds = computeElapsedSeconds(m_startTime);
@@ -2832,25 +2725,24 @@ public:
         woPdf = bsdfSamplingFraction * bsdfPdf + (1 - bsdfSamplingFraction) * dTreePdf;
     }
 
-    Spectrum sampleAttenuatedEmitterDirect(const Scene* scene, LightCutWrapper* lightCut, Point& p,
+    Spectrum sampleAttenuatedEmitterDirect(const Scene* scene, LightcutWrapper* lightcut, Point& p,
         DirectSamplingRecord& dRec,
         const Intersection& its, const Medium* medium, int& interactions,
         const Point2& _sample, Sampler* sampler) const {
         Point2 sample(_sample);
 
-        Float emPdf;
+        Float emPmf;
         // We don't use sample.x + sample reuse here because for millions of lights this might
         // lead to numerical instabilities in the reused sample for emitter->sampleDirect below.
         Float emSample = sampler->next1D();
-        const Emitter* emitter = lightCut->sampleEmitter(m_lightTree.get(), p, emPdf, emSample);
-        // const Emitter* emitter = m_lightTree.get()->sampleEmitter(p, emPdf, emSample);
+        const Emitter* emitter = lightcut->sampleEmitter(m_lightTree.get(), p, emPmf, emSample);
 
         if (emitter == nullptr) {
             SLog(EWarn, "Lightcut sampled null emitter!");
             return Spectrum(0.f);
         }
-        if (emPdf == 0.f) {
-            SLog(EWarn, "Lightcut sampled emitter with pdf = 0!");
+        if (emPmf == 0.f) {
+            SLog(EWarn, "Lightcut sampled emitter with pmf = 0!");
             return Spectrum(0.f);
         }
 
@@ -2860,11 +2752,11 @@ public:
         if (dRec.pdf != 0) {
             if (its.shape && its.isMediumTransition())
                 medium = its.getTargetMedium(dRec.d);
-            Spectrum transmittance = its.p == dRec.p ? Spectrum(1.f) : scene->evalTransmittance(its.p, 
+            Spectrum transmittance = its.p == dRec.p ? Spectrum(1.f) : scene->evalTransmittance(its.p,
                 true, dRec.p, emitter->isOnSurface(), dRec.time, medium, interactions, sampler);
-            value *= transmittance / emPdf;
+            value *= transmittance / emPmf;
             dRec.object = emitter;
-            dRec.pdf *= emPdf;
+            dRec.pdf *= emPmf;
             return value;
         }
         else {
@@ -2872,31 +2764,29 @@ public:
         }
     }
 
-    Float emitterPdf(LightCutWrapper* lightCut, DirectSamplingRecord& dRec, Point& p) const {
+    Float emitterPdf(LightcutWrapper* lightcut, DirectSamplingRecord& dRec, Point& p) const {
         const Emitter* emitter = static_cast<const Emitter*>(dRec.object);
         if (emitter == nullptr) return 0.f;
 
-        return emitter->pdfDirect(dRec) * lightCut->emitterPdf(m_lightTree.get(), p, emitter);
-        // bool hit = false;
-        // return emitter->pdfDirect(dRec) * m_lightTree.get()->emitterPdf(p, emitter, hit);
+        return emitter->pdfDirect(dRec) * lightcut->emitterPmf(m_lightTree.get(), p, emitter);
     }
 
-    void record(LightCutWrapper* lightCut, DirectSamplingRecord& dRec, Spectrum value, Point p, Vector dTreeVoxelSize, Sampler* sampler) const {
-        // lightCut->record(m_lightTree.get(), dRec, value.average());
+    void record(LightcutWrapper* lightcut, DirectSamplingRecord& dRec, Spectrum value, Point p, Vector dTreeVoxelSize, Sampler* sampler) const {
+        // lightcut->record(m_lightTree.get(), dRec, value.average());
 
-        LightCutWrapper* splatLightCut = lightCut;
+        LightcutWrapper* splatLightcut = lightcut;
 
         // Jitter the actual position within the
         // filter box to perform stochastic filtering.
-        Vector offset = dTreeVoxelSize;
+        Vector offset = dTreeVoxelSize * 0.5f;
         offset.x *= sampler->next1D() - 0.5f;
         offset.y *= sampler->next1D() - 0.5f;
         offset.z *= sampler->next1D() - 0.5f;
 
         Point origin = m_sdTree.get()->aabb().clip(p + offset);
-        splatLightCut = m_sdTree.get()->lightCutWrapper(origin);
-        if (splatLightCut) {
-            splatLightCut->record(m_lightTree.get(), dRec, value.average());
+        splatLightcut = m_sdTree.get()->lightcutWrapper(origin);
+        if (splatLightcut) {
+            splatLightcut->record(m_lightTree.get(), dRec, value.average());
         }
     }
 
@@ -2980,6 +2870,8 @@ public:
         int nVertices = 0;
 
         auto recordRadiance = [&](Spectrum radiance) {
+            // if (rRec.depth < 2) return; // minimum path length
+
             Li += radiance;
             for (int i = 0; i < nVertices; ++i) {
                 vertices[i].record(radiance);
@@ -3127,69 +3019,17 @@ public:
 
                 Vector dTreeVoxelSize;
                 DTreeWrapper* dTree = nullptr;
-                LightCutWrapper* lightCut = nullptr;
+                LightcutWrapper* lightcut = nullptr;
 
                 Point p = its.p;
 
                 // We only guide smooth BRDFs for now. Analytic product sampling
                 // would be conceivable for discrete decisions such as refraction vs
                 // reflection.
-                /*if (bsdf->getType() & BSDF::ESmooth) {
-                    dTree = m_sdTree->dTreeWrapper(p, dTreeVoxelSize);
-                }*/
-
-                m_sdTree->wrappers(p, dTreeVoxelSize, dTree, lightCut);
+                m_sdTree->wrappers(p, dTreeVoxelSize, dTree, lightcut);
                 if (!(bsdf->getType() & BSDF::ESmooth)) {
                     dTree = nullptr;
                 }
-
-                // TODO: faster, include in dtree search
-                // LightCutWrapper* lightCut = m_sdTree->lightCutWrapper(p);
-
-                /*Vector randSphere = warp::squareToUniformSphere(rRec.nextSample2D());
-                Float minSize = std::min(dTreeVoxelSize.x, std::min(dTreeVoxelSize.y, dTreeVoxelSize.z));
-                randSphere *= minSize * 0.25f;
-                Point inNeighbor = p + randSphere;
-
-                if (m_sdTree->aabb().contains(inNeighbor)) {
-                    Vector neighborSize;
-                    LightCutWrapper* neighbor = m_sdTree->lightCutWrapper(inNeighbor, neighborSize);
-                    if (lightCut != neighbor && neighbor != nullptr) {
-                        Float thisDiag = dTreeVoxelSize.length();
-                        Float neighborDiag = dTreeVoxelSize.length();
-
-                        Float probUseNeighbor = thisDiag / (thisDiag + neighborDiag);
-                        if (rRec.nextSample1D() <= 2 * probUseNeighbor) {
-                            lightCut = neighbor;
-                        }
-                    }
-                }*/
-
-                
-                //if (m_isFinalIter && !(bsdf->getType() & BSDF::ETransmission)) {
-                //    // return Spectrum((its.p - voxelCenter).length() / halfSize.length());
-                //    /*int a;
-                //    Float r = abs(std::fmodf(voxelCenter.x * 10000.f, a));
-                //    Float g = abs(std::fmodf(voxelCenter.y * 10000.f, a));
-                //    Float b = abs(std::fmodf(voxelCenter.z * 10000.f, a));
-                //    Float arr[3] = { r, g, b };
-                //    return Spectrum(arr);*/
-
-                //    /*Float a = std::min(1.f, std::max(0.f, static_cast<Float>(lightCut->depth() - 8) / 16.f));
-                //    Float r = a;
-                //    Float g = 0;
-                //    Float b = 1.f - a;
-                //    Float arr[3] = { r, g, b };
-                //    return Spectrum(arr);*/
-
-                //    Float a = lightCut->envSampleFraction(m_lightTree.get());
-                //    Float r = a;
-                //    Float g = 0;
-                //    Float b = 1.f - a;
-                //    Float arr[3] = { r, g, b };
-                //    return Spectrum(arr);
-                //}
-
 
                 Float bsdfSamplingFraction = m_bsdfSamplingFraction;
                 if (dTree && m_bsdfSamplingFractionLoss != EBsdfSamplingFractionLoss::ENone) {
@@ -3211,66 +3051,6 @@ public:
                 /*                          Luminaire sampling                          */
                 /* ==================================================================== */
 
-                //DirectSamplingRecord dRec(its);
-
-                ///* Estimate the direct illumination if this is requested */
-                //if (m_doNee &&
-                //    (rRec.type & RadianceQueryRecord::EDirectSurfaceRadiance) &&
-                //    (bsdf->getType() & BSDF::ESmooth)) {
-                //    int interactions = m_maxDepth - rRec.depth - 1;
-
-                //    Spectrum value = scene->sampleAttenuatedEmitterDirect(
-                //        dRec, its, rRec.medium, interactions,
-                //        rRec.nextSample2D(), rRec.sampler);
-
-                //    if (!value.isZero()) {
-                //        BSDFSamplingRecord bRec(its, its.toLocal(dRec.d));
-
-                //        Float woDotGeoN = dot(its.geoFrame.n, dRec.d);
-
-                //        /* Prevent light leaks due to the use of shading normals */
-                //        if (!m_strictNormals || woDotGeoN * Frame::cosTheta(bRec.wo) > 0) {
-                //            /* Evaluate BSDF * cos(theta) */
-                //            const Spectrum bsdfVal = bsdf->eval(bRec);
-
-                //            /* Calculate prob. of having generated that direction using BSDF sampling */
-                //            const Emitter* emitter = static_cast<const Emitter*>(dRec.object);
-                //            Float woPdf = 0, bsdfPdf = 0, dTreePdf = 0;
-                //            if (emitter->isOnSurface() && dRec.measure == ESolidAngle) {
-                //                pdfMat(woPdf, bsdfPdf, dTreePdf, bsdfSamplingFraction, bsdf, bRec, dTree);
-                //            }
-
-                //            /* Weight using the power heuristic */
-                //            const Float weight = miWeight(dRec.pdf, woPdf);
-
-                //            value *= bsdfVal;
-                //            Spectrum L = throughput * value * weight;
-
-                //            if (!m_isFinalIter && m_nee != EAlways) {
-                //                if (dTree) {
-                //                    Vertex v = Vertex{
-                //                        dTree,
-                //                        dTreeVoxelSize,
-                //                        Ray(its.p, dRec.d, 0),
-                //                        throughput * bsdfVal / dRec.pdf,
-                //                        bsdfVal,
-                //                        L,
-                //                        dRec.pdf,
-                //                        bsdfPdf,
-                //                        dTreePdf,
-                //                        false,
-                //                    };
-
-                //                    v.commit(*m_sdTree, 0.5f, m_spatialFilter, m_directionalFilter, m_isBuilt ? m_bsdfSamplingFractionLoss : EBsdfSamplingFractionLoss::ENone, rRec.sampler);
-                //                }
-                //            }
-
-                //            recordRadiance(L);
-                //        }
-                //    }
-                //}
-
-
                 DirectSamplingRecord dRec(its);
 
                 /* Estimate the direct illumination if this is requested */
@@ -3280,7 +3060,7 @@ public:
                     int interactions = m_maxDepth - rRec.depth - 1;
 
                     Float emSample = rRec.nextSample1D();
-                    Spectrum value = sampleAttenuatedEmitterDirect(scene, lightCut, p,
+                    Spectrum value = sampleAttenuatedEmitterDirect(scene, lightcut, p,
                         dRec, its, rRec.medium, interactions,
                         rRec.nextSample2D(), rRec.sampler);
 
@@ -3307,12 +3087,12 @@ public:
                             value *= bsdfVal;
                             Spectrum L = throughput * value * weight;
 
-                            // lightCut->record(m_lightTree.get(), dRec, (L / (throughput * bsdfVal)).average());
                             if (!m_isFinalIter) {
-                                record(lightCut, dRec, L / (throughput * bsdfVal), p, dTreeVoxelSize, rRec.sampler);
+                                Spectrum irradiance = L / (throughput * bsdfVal);
+                                record(lightcut, dRec, irradiance, p, dTreeVoxelSize, rRec.sampler);
                             }
 
-                            if (!m_isFinalIter && (!m_manyLights || emitter->isEnvironmentEmitter())) {
+                            if (!m_isFinalIter && (!m_manyLights)) {
                                 if (dTree) {
                                     Vertex v = Vertex{
                                         dTree,
@@ -3401,24 +3181,21 @@ public:
                 weight using the power heuristic */
                 if (rRec.type & RadianceQueryRecord::EDirectSurfaceRadiance) {
                     bool isDelta = bRec.sampledType & BSDF::EDelta;
-                    // const Float emPdf = (m_doNee && !isDelta && !value.isZero()) ? scene->pdfEmitterDirect(dRec) : 0;
-
-                    const Float emPdf = (m_manyLights && !isDelta && !value.isZero()) ? emitterPdf(lightCut, dRec, p) : 0;
+                    const Float emPdf = (m_manyLights && !isDelta && !value.isZero()) ? emitterPdf(lightcut, dRec, p) : 0;
 
                     const Float weight = miWeight(woPdf, emPdf);
                     Spectrum L = throughput * value * weight;
+
                     if (!L.isZero()) {
                         recordRadiance(L);
 
                         if (m_manyLights && !m_isFinalIter) {
-                            record(lightCut, dRec, L / (throughput * woPdf), p, dTreeVoxelSize, rRec.sampler);
+                            Spectrum irradiance = L / (throughput * woPdf);
+                            record(lightcut, dRec, irradiance, p, dTreeVoxelSize, rRec.sampler);
                         }
                     }
 
                     if ((!isDelta || m_bsdfSamplingFractionLoss != EBsdfSamplingFractionLoss::ENone) && dTree && nVertices < MAX_NUM_VERTICES && !m_isFinalIter) {
-                        const Emitter* emitter = static_cast<const Emitter*>(dRec.object);
-                        bool envEmitter = emitter != nullptr && emitter->isEnvironmentEmitter();
-
                         if (1 / woPdf > 0) {
                             vertices[nVertices] = Vertex{
                                 dTree,
@@ -3426,7 +3203,7 @@ public:
                                 ray,
                                 throughput,
                                 bsdfWeight * woPdf,
-                                (m_manyLights && !envEmitter) ? Spectrum{0.0f} : L,
+                                (m_manyLights) ? Spectrum{0.0f} : L,
                                 woPdf,
                                 bsdfPdf,
                                 dTreePdf,
@@ -3718,9 +3495,18 @@ private:
     Float m_dTreeThreshold;
 
     /**
-        blabla.
+        Parameter "sigma" for subdividing lightcut nodes.
+        Default = 0.01
     */
-    Float m_lightCutThreshold;
+    Float m_lightcutThreshold;
+
+    /**
+        Fixed emitter sampling fraction for the environment emitter.
+        Unused if the scene has no environment emitter.
+        Use -1 to enable dynamic environment sampling fractions based on the energy collected from the environment and other emitters.
+        Default = -1
+    */
+    Float m_envSamplingFraction;
 
     /**
         When guiding, we perform MIS with the balance heuristic between the guiding
@@ -3762,6 +3548,12 @@ public:
 MTS_IMPLEMENT_CLASS(GuidedPathTracer, false, MonteCarloIntegrator)
 MTS_EXPORT_PLUGIN(GuidedPathTracer, "Guided path tracer");
 MTS_NAMESPACE_END
+
+
+
+
+
+
 
 
 
