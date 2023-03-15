@@ -168,11 +168,19 @@
       vs. how often the guiding distribution is sampled.
 			Recommended value: 0.5
     </param>
-    <param name="nee" readableName="Next event estimation" type="string" default="never" importance="1">
-      How to perform next event estimation (NEE). The following values are valid:
-      "never": Never performs NEE.
-      "kickstart": Performs NEE for the first few iterations to initialize the guiding distribution with good direct illumination.
-      "always": Always performs NEE.
+    
+    <param name="manylights" readableName="Adaptive lightcuts" type="boolean" default="true" importance="1">
+      Wether to use adaptive lightcuts for direct illumination sampling. Caution: Only works in scenes with at least 2 emitters!
+    </param>
+    <param name="lightcutThreshold" readableName="Lightcut subdivision threshold" type="float" default="0.01" importance="1">
+      Parameter "sigma" for subdividing lightcut nodes.
+      Recommended value: 0.01
+    </param>
+    <param name="envSamplingFraction" readableName="Fixed environment sampling fraction" type="float" default="-1" importance="1">
+      Fixed emitter sampling fraction for the environment emitter.
+      Unused if the scene has no environment emitter.
+      Use -1 to enable dynamic environment sampling fractions based on the energy collected from the environment and other emitters.
+      Recommended value: -1
     </param>
     <param name="dumpSDTree" readableName="Dump SD-tree to disk" type="boolean" default="false" importance="1">
       Whether to dump a binary representation of the SD-tree to disk after every
@@ -275,6 +283,9 @@
 			It does not account for participating media, such as fog or smoke&mdash;see
 			the volumetric path tracer if this is needed.
 		</descr>
+    <param name="nee" readableName="Next event estimation" type="boolean" default="true" importance="1">
+      Use next event estimation.
+    </param>
 	</plugin>
 
 	<plugin type="integrator" name="volpath_simple" readableName = "Volumetric path tracer (Simple)"
